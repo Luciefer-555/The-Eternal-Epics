@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server"
 import { generateSageText } from "@/lib/sage-provider"
+import { translateVoiceAnswer } from "@/lib/voice-translation"
 
 const SUPPORTED_LANGUAGES: Record<string, string> = {
   "hi-IN": "Hindi", "en-IN": "English", "ta-IN": "Tamil", "te-IN": "Telugu", "kn-IN": "Kannada",
@@ -67,12 +68,15 @@ export async function POST(request: NextRequest) {
     const preferred = typeof preferredLanguage === "string" && SUPPORTED_LANGUAGES[preferredLanguage] ? preferredLanguage : null
     const latestUserText = [...safeMessages].reverse().find((message) => message.role === "user")?.content || ""
     const outputLanguage = preferred || getExplicitLanguageRequest(latestUserText) || detected || inferScriptLanguage(latestUserText)
-    const languageInstruction = outputLanguage
-      ? `Respond in ${SUPPORTED_LANGUAGES[outputLanguage]}. If the user explicitly asks for a different language in their latest message, follow that request. Preserve natural code-switching when the user mixes languages. Keep the spoken answer concise and write numbers and verse references as spoken words, not digits.`
-      : "Infer the language or language mix from the latest user message. Reply in the same language or natural mix. If the user explicitly asks for a language, follow that request. Keep the spoken answer concise and write numbers and verse references as spoken words, not digits."
+    const languageInstruction = outputLanguage && outputLanguage !== "en-IN"
+      ? `Draft a concise, accurate English answer to the user's latest message for translation into ${SUPPORTED_LANGUAGES[outputLanguage]}. Do not discuss language selection or your drafting process. Write numbers and verse references as spoken words.`
+      : "Answer the user's latest message in concise, natural English. Do not discuss language selection or your drafting process. Write numbers and verse references as spoken words."
 
-    const answer = await generateSageText(safeMessages, languageInstruction, { purpose: "qa", maxTokens: 1_000, reasoningBudget: 256 })
-    return NextResponse.json({ response: answer, language: outputLanguage })
+    const draft = await generateSageText(safeMessages, languageInstruction, { purpose: "qa", maxTokens: 1_000, reasoningBudget: 256 })
+    const language = outputLanguage || "en-IN"
+    const latestUserMessage = [...safeMessages].reverse().find((message) => message.role === "user")?.content || ""
+    const response = await translateVoiceAnswer(draft, language, latestUserMessage)
+    return NextResponse.json({ response, language })
   } catch (error) {
     console.error("Voice chat response failed", error)
     const message = error instanceof Error ? error.message : "Sage could not complete this response."
