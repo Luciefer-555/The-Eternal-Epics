@@ -1,100 +1,61 @@
-# Hume AI TTS Setup Guide
+# Gnani AI narration setup
 
-## 🔧 Setup Steps
+Narration uses Gnani AI Timbre v2.5 through the server-only `POST /api/narrate` route. The route translates English verse meanings through Sarvam Translate, then requests WAV audio from Gnani. Sage Q&A uses NVIDIA NIM. Gnani, NVIDIA, and Sarvam credentials are only read in server routes; they are never exposed to browser code. Audio and translations are cached under the operating system temporary directory; browsers also cache audio in Cache Storage.
 
-### 1. Create Environment File
+## Voice chat
 
-Create a file named `.env.local` in the root directory with:
+The `/voice-chat` page uses short, tap-to-speak clips for the first implementation. The browser records locally, converts the clip to mono 16 kHz PCM WAV, and sends it to `/api/voice-chat/transcribe`. That server route calls Gnani Prisma v3.0 at `https://api.vachana.ai/stt/v3` with `language_code=indic-auto`; Gnani returns the transcript and detected language. The transcript and recent turns are sent to `/api/voice-chat/respond`, which reuses the configured Sage provider. For non-English responses, the final Sage answer is translated into the detected/requested language through the configured `TRANSLATE_PROVIDER` (Sarvam by default), then the same translated text is displayed and synthesized through the existing `/api/narrate` route using Gnani Timbre v2.5. If the translation provider fails or returns text outside the requested script, voice chat shows an error instead of speaking an English fallback.
+
+Voice chat defaults to automatic language matching, including code-switching. Users can choose a supported response language to explicitly request it. The microphone is not left open between turns. While Sage is speaking, **Interrupt & speak** stops playback, fades the spoken transcript, and starts a new recording. Recordings automatically stop at 25 seconds; Gnani's REST STT endpoint accepts clips up to 30 seconds. A Gnani API key is used server-side for both speech recognition and TTS; confirm STT access is enabled for the key in your Gnani account.
+
+The bar visualizer, message styling, shimmer, and transcript presentation are lightweight local adaptations of the referenced ElevenLabs UI components. They are presentation components only; no ElevenLabs service or key is used. Gnani TTS does not currently return character alignment data through this app's REST route, so the transcript is shown for the duration of speech rather than highlighted word-by-word.
+
+## Configure locally
+
+Copy `.env.example` to `.env.local` and set:
 
 ```env
-HUME_API_KEY=vYVBr89Kfief6nCizxI8LNzu24OduuTTImxuF9iePlxB0A8Xh
+GNANI_API_KEY=your_gnani_api_key
+NVIDIA_API_KEY=your_nvidia_api_key
+SAGE_PROVIDER=nvidia
+SAGE_MODEL=nvidia/nemotron-3.5-lightning-30b-a3b
+TRANSLATE_PROVIDER=sarvam
+TRANSLATE_MODEL=sarvam-105b-conversations
+SARVAM_API_KEY=your_sarvam_api_key
 ```
 
-### 2. Install Dependencies
+Create an NVIDIA API key at [build.nvidia.com](https://build.nvidia.com) and a Sarvam API key from the [Sarvam dashboard](https://dashboard.sarvam.ai/). The NVIDIA key is sent only from the server to `https://integrate.api.nvidia.com/v1/chat/completions`; the Sarvam key is sent only to `https://api.sarvam.ai/v1/chat/completions`. `SAGE_MODEL` controls Q&A. `TRANSLATE_PROVIDER=sarvam` and `TRANSLATE_MODEL=sarvam-105b-conversations` select Sarvam's India-focused conversation model. Translation prompts use a low reasoning effort and the app consumes only final message content. Input is split into short chunks and numerals are verbalized before translation.
+
+Existing Sage providers remain available. For OpenRouter, set `SAGE_PROVIDER=openrouter`, `SAGE_API_KEY`, and optionally `SAGE_API_URL=https://openrouter.ai/api/v1`. For Ollama, set `SAGE_PROVIDER=ollama`, `SAGE_API_URL=http://localhost:11434`, and leave `SAGE_API_KEY` empty. Replicate and the local completion provider are also retained. The NVIDIA model runs with a limited reasoning budget for Q&A; only final message content is returned.
+
+Install and start the app with pnpm:
 
 ```bash
 pnpm install
-```
-
-### 3. Start Development Server
-
-```bash
 pnpm dev
 ```
 
-### 4. Test the TTS Feature
+Open a story page, select one of Gnani's supported languages, and use Play, Pause, and Stop. Hindi is selected by default. Selecting a different language stops current playback; the preference is saved in localStorage.
 
-1. Open http://localhost:3000
-2. Navigate to any story/chapter page
-3. Click "Listen to Chapter" button
-4. Select a voice from the dropdown
-5. Click the play button
+## Gnani model and voices
 
-## 🎤 Available Voices
+The server sends `model: "timbre-v2.5"`, a language-specific v2.5 voice, an explicit `language`, speed `0.95`, and mono 48 kHz WAV settings. Defaults are Hindi Nalini, English Girish, Tamil Asmita, Telugu Suhana, Kannada Saanvi, Malayalam Reshma, Marathi Zahira, Punjabi Mehuli, Bengali Kirra, and Gujarati Falak.
 
-- **Serene Monk** - Calm, meditative, peaceful tone
-- **Bhakti Narrator** - Devotional, warm, reverent voice
-- **Epic Storyteller** - Grand, dramatic, authoritative narration
+Supported choices: Hindi, English, Tamil, Telugu, Kannada, Malayalam, Marathi, Punjabi, Bengali, and Gujarati. See Gnani's [REST TTS guide](https://docs.gnani.ai/api/TTS/tts-inference), [voice catalog](https://docs.gnani.ai/api/TTS/available-voices), and [input formatting guide](https://docs.gnani.ai/api/TTS/tts-input-formating).
 
-Voices are generated dynamically by Hume AI based on text descriptions.
+## Translation provider note
 
-## 🐛 Debugging
+The NVIDIA-hosted Nemotron Super endpoint returned `Function not found for account` for the available NVIDIA key. The catalog's Sarvam-M chat endpoint is retired. Translation therefore uses Sarvam's current Chat Completion V1 model `sarvam-105b-conversations`, which supports Indian-language conversation; Sage Q&A remains on NVIDIA NIM. See [Sarvam Chat Completion V1](https://docs.sarvam.ai/api-reference/chat/chat-completions-v1) and [authentication](https://docs.sarvam.ai/api-reference/authentication).
 
-### Check Console Logs
+## Test the endpoint
 
-The app now has detailed logging. Open browser DevTools (F12) and check:
+```bash
+curl -X POST http://localhost:3000/api/narrate `
+  -H "Content-Type: application/json" `
+  -d '{"text":"The Lord is the well-wisher of all living beings.","lang":"hi-IN"}' `
+  --output narration.wav
+```
 
-1. **Browser Console** - Look for `[AudioPlayer]` logs
-2. **Server Terminal** - Look for `[TTS]` logs
+The response is a WAV binary. Errors are returned as JSON. The route rejects empty input, unsupported languages, and text longer than 5,000 characters. Each verse is normally sent in one request; unusually long verses are split at sentence boundaries in the browser.
 
-### Common Issues
-
-#### "HUME_API_KEY not configured"
-- Make sure `.env.local` exists in the root directory
-- Restart the dev server after creating `.env.local`
-
-#### "Hume API error: 401"
-- Invalid API key
-- Check that the key is correct in `.env.local`
-
-#### "Hume API error: 429"
-- Rate limit exceeded
-- Wait a few minutes and try again
-
-#### "No audio generated"
-- Check server logs for detailed error
-- Text might be too long (max 3000 characters)
-
-#### Audio doesn't play
-- Check browser console for errors
-- Try a different browser
-- Make sure browser allows audio playback
-
-## 📝 What Was Fixed
-
-1. **Enhanced Logging** - Added detailed console logs throughout the flow
-2. **Better Error Messages** - Shows specific API errors to help debug
-3. **Voice Names Updated** - Changed to correct Hume voice IDs (ITO, KORA, DACHER)
-4. **Text Truncation** - Automatically truncates long text to 3000 chars
-5. **Improved Error Display** - Audio player shows detailed error messages
-
-## 🔍 Testing Checklist
-
-- [ ] `.env.local` file created with API key
-- [ ] Dependencies installed (`pnpm install`)
-- [ ] Dev server running (`pnpm dev`)
-- [ ] Can navigate to a story page
-- [ ] "Listen to Chapter" button appears
-- [ ] Voice selector works
-- [ ] Audio player shows loading state
-- [ ] Audio plays successfully
-- [ ] Can pause/resume audio
-- [ ] Progress bar works
-
-## 📞 Need Help?
-
-Check the logs in:
-1. Browser console (F12 → Console tab)
-2. Terminal where `pnpm dev` is running
-
-Look for `[TTS]` and `[AudioPlayer]` prefixed messages.
+The server cache uses the SHA-256 hash of language plus original text for both translation and audio. On Vercel, `/tmp` is ephemeral and may be reset between instances; browser Cache Storage provides a second cache in the same browser. There is no shared durable cache between separate server instances.

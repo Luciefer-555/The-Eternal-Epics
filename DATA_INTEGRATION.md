@@ -55,12 +55,9 @@ The `srimad_bhagavatam.json` file contains actual verses from Vedabase.io. The a
 2. Fall back to sample data for chapters not in the dataset
 3. Show "Content coming soon..." if neither exists
 
-## TTS Integration
+## Narration Integration
 
-The Hume AI TTS feature now narrates:
-- **Actual verses** from the Vedabase dataset
-- **Full chapter content** (all verses concatenated)
-- **Three voice options** with distinct characteristics
+Gnani AI Timbre v2.5 narrates verse meanings one verse at a time in the selected supported language. English verse meanings are translated through the configured Sage provider before synthesis; Sanskrit text is not sent to TTS. See `SETUP_TTS.md` for setup and caching details.
 
 ## Performance
 

@@ -9,7 +9,14 @@ export function useBookmarks() {
   useEffect(() => {
     const saved = localStorage.getItem("bhagavatam_bookmarks")
     if (saved) {
-      setBookmarks(new Set(JSON.parse(saved)))
+      try {
+        const parsed: unknown = JSON.parse(saved)
+        if (Array.isArray(parsed) && parsed.every((item) => typeof item === "string")) {
+          setBookmarks(new Set(parsed))
+        }
+      } catch {
+        localStorage.removeItem("bhagavatam_bookmarks")
+      }
     }
     setIsLoaded(true)
   }, [])

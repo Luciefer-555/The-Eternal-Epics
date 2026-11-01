@@ -16,6 +16,7 @@ export function MobileMenu() {
     { label: "Cantos", href: "/cantos" },
     { label: "Gallery", href: "/gallery" },
     { label: "Ask the Sage", href: "/ask" },
+    { label: "Voice Chat", href: "/voice-chat" },
     { label: "Search", href: "/search" },
     { label: "Bookmarks", href: "/bookmarks" },
   ]

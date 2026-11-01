@@ -1,116 +1,243 @@
+import { createHash } from "node:crypto"
+import { mkdir, readFile, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import path from "node:path"
 import { type NextRequest, NextResponse } from "next/server"
+import { generateSageText } from "@/lib/sage-provider"
 
-// Hume AI Text-to-Speech API integration
-// Documentation: https://dev.hume.ai/reference/text-to-speech-tts/synthesize-json
+export const runtime = "nodejs"
+
+const TTS_URL = "https://api.vachana.ai/api/v1/tts/inference"
+const MAX_TEXT_LENGTH = 5_000
+const CACHE_DIR = path.join(tmpdir(), "eternal-epics-gnani-cache-v2")
+const SARVAM_CHAT_URL = "https://api.sarvam.ai/v1/chat/completions"
+const SUPPORTED_LANGUAGES = {
+  "hi-IN": { label: "Hindi", voice: "Nalini" },
+  "en-IN": { label: "English", voice: "Girish" },
+  "ta-IN": { label: "Tamil", voice: "Asmita" },
+  "te-IN": { label: "Telugu", voice: "Suhana" },
+  "kn-IN": { label: "Kannada", voice: "Saanvi" },
+  "ml-IN": { label: "Malayalam", voice: "Reshma" },
+  "mr-IN": { label: "Marathi", voice: "Zahira" },
+  "pa-IN": { label: "Punjabi", voice: "Mehuli" },
+  "bn-IN": { label: "Bengali", voice: "Kirra" },
+  "gu-IN": { label: "Gujarati", voice: "Falak" },
+} as const
+
+const inFlight = new Map<string, Promise<Buffer>>()
+
+function errorResponse(error: string, status: number) {
+  return NextResponse.json({ error }, { status })
+}
+
+function cacheKey(lang: string, text: string) {
+  return createHash("sha256").update(`${lang}\0${text}`).digest("hex")
+}
+
+function responseFromAudio(audio: Buffer, cache: "HIT" | "MISS") {
+  const bytes = audio.buffer.slice(audio.byteOffset, audio.byteOffset + audio.byteLength) as ArrayBuffer
+  return new Response(bytes, { headers: { "Content-Type": "audio/wav", "Cache-Control": "private, max-age=31536000", "X-Audio-Cache": cache } })
+}
+
+async function cachedAudio(key: string) {
+  try {
+    return await readFile(path.join(CACHE_DIR, `${key}.wav`))
+  } catch {
+    return null
+  }
+}
+
+async function translate(text: string, lang: keyof typeof SUPPORTED_LANGUAGES) {
+  const language = SUPPORTED_LANGUAGES[lang].label
+  const provider = process.env.TRANSLATE_PROVIDER || "sarvam"
+
+  if (provider === "sarvam") {
+    const apiKey = process.env.SARVAM_API_KEY
+    if (!apiKey) throw new Error("SARVAM_API_KEY is not configured for Indian-language translation.")
+
+    const pieces = splitForTranslation(speakableNumbers(text), 1_900)
+    const translatedPieces: string[] = []
+    for (const piece of pieces) {
+      const response = await fetch(SARVAM_CHAT_URL, {
+        method: "POST",
+        headers: { "api-subscription-key": apiKey, "Content-Type": "application/json" },
+        signal: AbortSignal.timeout(30_000),
+        body: JSON.stringify({
+          model: process.env.TRANSLATE_MODEL || "sarvam-105b-conversations",
+          max_tokens: 500,
+          temperature: 0.2,
+          reasoning_effort: "low",
+          stream: false,
+          messages: [
+            {
+              role: "system",
+              content: `Translate faithfully and reverently into natural ${language} for spoken narration. Preserve every fact, relationship, and sacred name. Write numbers and verse references as spoken words. Return only plain text.`,
+            },
+            { role: "user", content: piece },
+          ],
+        }),
+      })
+      if (!response.ok) {
+        const detail = await response.text().catch(() => "")
+        console.error("Sarvam translation failed", { status: response.status, detail: detail.slice(0, 300) })
+        throw new Error("The translation service could not translate this verse.")
+      }
+      const result = await response.json()
+      const finalText = typeof result.choices?.[0]?.message?.content === "string"
+        ? result.choices[0].message.content.replace(/<think>[\s\S]*?<\/think>/gi, "").replace(/<think>[\s\S]*$/gi, "").trim()
+        : ""
+      if (!finalText) {
+        throw new Error("The translation service returned no narration text.")
+      }
+      translatedPieces.push(finalText)
+    }
+    return translatedPieces.join(" ")
+  }
+
+  return generateSageText(
+    [
+      {
+        role: "user",
+        content: `Translate the following Śrīmad Bhāgavatam verse meaning into ${language} for reverent narration aloud. Preserve every idea and devotional meaning faithfully; do not add commentary or omit details. Render all numbers, verse references, and numeric expressions as spoken words in ${language}. Keep sacred names respectful and natural. Return plain text only, with no heading, quotes, markdown, or explanation.\n\n${text}`,
+      },
+    ],
+    "Faithful, reverent translation for spoken narration. Plain text only.",
+    { temperature: 0.2, maxTokens: 300, purpose: "translation", provider },
+  )
+}
+
+function splitForTranslation(text: string, maxLength: number) {
+  const sentences = text.match(/[^.!?]+[.!?]+|[^.!?]+$/g)?.map((sentence) => sentence.trim()).filter(Boolean) ?? [text]
+  const pieces: string[] = []
+  for (const sentence of sentences) {
+    let remaining = sentence
+    while (remaining.length > maxLength) {
+      let splitAt = remaining.lastIndexOf(" ", maxLength)
+      if (splitAt < maxLength * 0.6) splitAt = maxLength
+      pieces.push(remaining.slice(0, splitAt).trim())
+      remaining = remaining.slice(splitAt).trim()
+    }
+    if (remaining) pieces.push(remaining)
+  }
+  return pieces
+}
+
+const SMALL_NUMBERS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen"]
+const TENS = ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"]
+
+function numberToWords(value: number): string {
+  if (value < 20) return SMALL_NUMBERS[value]
+  if (value < 100) return `${TENS[Math.floor(value / 10)]}${value % 10 ? ` ${SMALL_NUMBERS[value % 10]}` : ""}`
+  if (value < 1_000) return `${numberToWords(Math.floor(value / 100))} hundred${value % 100 ? ` ${numberToWords(value % 100)}` : ""}`
+  if (value < 1_000_000) return `${numberToWords(Math.floor(value / 1_000))} thousand${value % 1_000 ? ` ${numberToWords(value % 1_000)}` : ""}`
+  if (value < 1_000_000_000) return `${numberToWords(Math.floor(value / 1_000_000))} million${value % 1_000_000 ? ` ${numberToWords(value % 1_000_000)}` : ""}`
+  return String(value)
+}
+
+function speakableNumbers(text: string) {
+  return text.replace(/\b\d[\d,]*(?:\.\d+)?\b/g, (raw) => {
+    const value = raw.replace(/,/g, "")
+    if (value.includes(".")) {
+      const [whole, fraction] = value.split(".")
+      const integer = Number(whole)
+      if (!Number.isSafeInteger(integer) || integer >= 1_000_000_000) return raw
+      return `${numberToWords(integer)} point ${[...fraction].map((digit) => SMALL_NUMBERS[Number(digit)]).join(" ")}`
+    }
+    const integer = Number(value)
+    return Number.isSafeInteger(integer) && integer < 1_000_000_000 ? numberToWords(integer) : raw
+  })
+}
+
+async function generateAudio(key: string, text: string, lang: keyof typeof SUPPORTED_LANGUAGES) {
+  const cached = await cachedAudio(key)
+  if (cached) return cached
+
+  const pending = inFlight.get(key)
+  if (pending) return pending
+
+  const generation = (async () => {
+    const apiKey = process.env.GNANI_API_KEY
+    if (!apiKey) throw new Error("Narration is not configured yet. Please try again later.")
+
+    await mkdir(CACHE_DIR, { recursive: true })
+    const response = await fetch(TTS_URL, {
+      method: "POST",
+      headers: { "X-API-Key-ID": apiKey, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        text,
+        voice: SUPPORTED_LANGUAGES[lang].voice,
+        model: "timbre-v2.5",
+        language: lang,
+        speed: 0.95,
+        audio_config: {
+          sample_rate: 48000,
+          num_channels: 1,
+          sample_width: 2,
+          encoding: "linear_pcm",
+          container: "wav",
+        },
+      }),
+    })
+
+    if (!response.ok) {
+      const detail = await response.text()
+      console.error("Gnani TTS request failed", { status: response.status, detail: detail.slice(0, 500) })
+      throw new Error("Gnani could not create audio for this verse.")
+    }
+
+    const audio = Buffer.from(await response.arrayBuffer())
+    if (audio.length === 0) throw new Error("Gnani returned an empty audio file.")
+    await writeFile(path.join(CACHE_DIR, `${key}.wav`), audio).catch(() => undefined)
+    return audio
+  })()
+
+  inFlight.set(key, generation)
+  try {
+    return await generation
+  } finally {
+    inFlight.delete(key)
+  }
+}
 
 export async function POST(request: NextRequest) {
   try {
-    const { text, voice = "serene_monk" } = await request.json()
+    const body: unknown = await request.json()
+    if (!body || typeof body !== "object") return errorResponse("A JSON request body is required.", 400)
 
-    console.log("[TTS] Request received:", { textLength: text?.length, voice })
-
-    if (!text) {
-      console.error("[TTS] No text provided")
-      return NextResponse.json({ error: "Text is required" }, { status: 400 })
+    const { text, lang, translated } = body as { text?: unknown; lang?: unknown; translated?: unknown }
+    if (typeof text !== "string" || !text.trim()) return errorResponse("Text is required.", 400)
+    if (text.length > MAX_TEXT_LENGTH) return errorResponse(`Text must be ${MAX_TEXT_LENGTH} characters or fewer.`, 400)
+    if (typeof lang !== "string" || !Object.hasOwn(SUPPORTED_LANGUAGES, lang)) {
+      return errorResponse("Choose a Gnani-supported language.", 400)
+    }
+    if (translated !== undefined && typeof translated !== "boolean") {
+      return errorResponse("The translated field must be a boolean.", 400)
     }
 
-    const humeApiKey = process.env.HUME_API_KEY
-    if (!humeApiKey) {
-      console.error("[TTS] HUME_API_KEY not found in environment variables")
-      return NextResponse.json({ 
-        error: "HUME_API_KEY not configured. Please add it to .env.local" 
-      }, { status: 500 })
-    }
+    const language = lang as keyof typeof SUPPORTED_LANGUAGES
+    const key = cacheKey(language, text.trim())
+    const hit = await cachedAudio(key)
+    if (hit) return responseFromAudio(hit, "HIT")
 
-    console.log("[TTS] API Key found:", humeApiKey.substring(0, 10) + "...")
-
-    // Voice descriptions for Hume TTS
-    const voiceDescriptions: Record<string, string> = {
-      serene_monk: "A calm, meditative voice with a gentle and peaceful tone, speaking slowly with clarity and warmth",
-      bhakti_narrator: "A devotional, warm voice with reverence and emotional depth, conveying spiritual wisdom",
-      epic_storyteller: "A grand, dramatic voice with authority and gravitas, perfect for epic narratives",
-    }
-
-    const selectedVoiceDesc = voiceDescriptions[voice] || voiceDescriptions["serene_monk"]
-    console.log("[TTS] Using voice description:", selectedVoiceDesc.substring(0, 50) + "...")
-
-    // Truncate text if too long (Hume has limits)
-    const maxLength = 3000
-    const truncatedText = text.length > maxLength ? text.substring(0, maxLength) + "..." : text
-
-    const requestBody = {
-      utterances: [
-        {
-          text: truncatedText,
-          description: selectedVoiceDesc,
-        },
-      ],
-      format: {
-        type: "mp3",
-      },
-      num_generations: 1,
-    }
-
-    console.log("[TTS] Calling Hume API...")
-
-    const response = await fetch("https://api.hume.ai/v0/tts", {
-      method: "POST",
-      headers: {
-        "X-Hume-Api-Key": humeApiKey,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(requestBody),
-    })
-
-    console.log("[TTS] Hume API response status:", response.status)
-
-    if (!response.ok) {
-      const errorText = await response.text()
-      console.error("[TTS] Hume API error:", {
-        status: response.status,
-        statusText: response.statusText,
-        error: errorText,
-      })
-      return NextResponse.json({ 
-        error: `Hume API error: ${response.status} - ${errorText}` 
-      }, { status: 500 })
-    }
-
-    const data = await response.json()
-    console.log("[TTS] Hume response structure:", {
-      hasGenerations: !!data.generations,
-      generationsLength: data.generations?.length,
-      firstGeneration: data.generations?.[0] ? Object.keys(data.generations[0]) : null,
-    })
-
-    // Extract audio from first generation
-    if (data.generations && data.generations.length > 0) {
-      const generation = data.generations[0]
-      // Audio is directly in generation.audio
-      const audio = generation.audio
-
-      console.log("[TTS] Audio extraction:", {
-        hasAudio: !!audio,
-        audioLength: audio?.length,
-        generationKeys: Object.keys(generation),
-      })
-
-      if (audio) {
-        console.log("[TTS] Success! Audio generated")
-        return NextResponse.json({
-          success: true,
-          audioUrl: `data:audio/mp3;base64,${audio}`,
-          voice: voice,
-        })
+    let narrationText = text.trim()
+    if (translated !== true && language !== "en-IN") {
+      const translationPath = path.join(CACHE_DIR, `${key}.txt`)
+      try {
+        narrationText = await readFile(translationPath, "utf8")
+      } catch {
+        narrationText = (await translate(narrationText, language)).trim()
+        if (!narrationText) return errorResponse("The translation service returned no narration text.", 502)
+        await mkdir(CACHE_DIR, { recursive: true })
+        await writeFile(translationPath, narrationText, "utf8").catch(() => undefined)
       }
     }
 
-    console.error("[TTS] No audio in response:", JSON.stringify(data, null, 2))
-    return NextResponse.json({ error: "No audio generated in response" }, { status: 500 })
+    const audio = await generateAudio(key, narrationText, language)
+    return responseFromAudio(audio, "MISS")
   } catch (error) {
-    console.error("[TTS] Unexpected error:", error)
-    return NextResponse.json({ 
-      error: `Internal server error: ${error instanceof Error ? error.message : String(error)}` 
-    }, { status: 500 })
+    const message = error instanceof Error ? error.message : "Narration could not be generated."
+    const status = message.includes("not configured") ? 503 : 502
+    console.error("Narration request failed", error)
+    return errorResponse(message, status)
   }
 }

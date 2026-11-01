@@ -348,6 +348,7 @@ export default function StoryPage({
   const [chapter, setChapter] = React.useState<string>("")
   const [story, setStory] = React.useState<{ title: string; verses: string[] }>({ title: "Story", verses: ["Content coming soon..."] })
   const [bookmarkId, setBookmarkId] = React.useState<string>("")
+  const [activeVerse, setActiveVerse] = React.useState<number | null>(null)
 
   React.useEffect(() => {
     params.then(({ canto: c, chapter: ch }) => {
@@ -359,6 +360,12 @@ export default function StoryPage({
       setBookmarkId(`story_${c}_${ch}`)
     })
   }, [params])
+
+  React.useEffect(() => {
+    if (activeVerse !== null) {
+      document.getElementById(`verse-${activeVerse}`)?.scrollIntoView({ behavior: "smooth", block: "center" })
+    }
+  }, [activeVerse])
 
   return (
     <>
@@ -379,16 +386,18 @@ export default function StoryPage({
           </motion.div>
 
           {/* Client-side Interactive Content */}
-          <StoryClient story={story} selectedVoice="serene_monk" />
+          <StoryClient story={story} onCurrentVerseChange={setActiveVerse} />
 
           {/* Verses */}
           <div className="space-y-4">
             {story.verses.map((verse, index) => (
               <motion.div
                 key={index}
+                id={`verse-${index}`}
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: index * 0.1 }}
+                className={activeVerse === index ? "scroll-mt-28 rounded-lg ring-2 ring-accent shadow-[0_0_24px_rgba(212,175,55,0.2)]" : "scroll-mt-28"}
               >
                 <div className="p-6 border border-border rounded-lg bg-card gold-glow">
                   <p className="text-sm text-accent font-semibold mb-3">Verse {index + 1}</p>
