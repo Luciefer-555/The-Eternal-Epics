@@ -1,140 +1,43 @@
-# Śrīmad Bhāgavatam — The Living Chronicle (Dark Edition)
+# Śrīmad Bhāgavatam — The Living Chronicle
 
-A production-ready, dark-themed website for exploring the sacred Śrīmad Bhāgavatam with AI-powered voice narration and divine wisdom chat.
+A dark-themed reading experience for the Śrīmad Bhāgavatam with Sage chat and verse-by-verse narration in Indian languages.
 
 ## Features
 
-- **Dark Theme**: Pure black (#000000) background with gold (#d4af37) accents
-- **Voice Narration**: Hume AI integration with three voice presets (Serene Monk, Bhakti Narrator, Epic Storyteller)
-- **Sage Chat**: AI-powered Q&A with support for multiple LLM providers
-- **Search**: Full-text search across verses and chapters
-- **Bookmarks**: Save favorite stories locally in browser
-- **Responsive Design**: Optimized for all screen sizes
-- **Animations**: Smooth Framer Motion transitions and interactions
+- Pure black theme with gold accents and Framer Motion transitions
+- Chapter and verse reading, with Gnani AI Timbre v2.5 narration
+- Verse translation through the configured Sage LLM provider
+- Search, local bookmarks, gallery, and Sage chat
+- Responsive pages for the Bhāgavatam, Rāmāyaṇa, Mahābhārata, Devī Purāṇa, and Śiva Purāṇa
 
-## Pages & Routes
+## Pages and routes
 
-- `/` - Home with hero and daily verse
-- `/cantos` - Grid of 12 Cantos
-- `/canto/[canto]` - Chapters for specific Canto
-- `/story/[canto]/[chapter]` - Full story with verses
-- `/gallery` - Pinterest-style image gallery
-- `/ask` - Ask the Sage chat interface
-- `/search` - Search verses and chapters
-- `/bookmarks` - View saved stories
+- `/` — Home
+- `/cantos` and `/canto/[canto]` — Canto and chapter navigation
+- `/story/[canto]/[chapter]` — Chapter verses and narration
+- `/gallery`, `/search`, `/bookmarks`, `/ask` — Gallery, search, saved stories, and Sage chat
+- `POST /api/narrate` — Translate when needed and synthesize WAV audio with Gnani
+- `POST /api/sage` — Generate Sage responses with the configured LLM provider
 
-## API Routes
+## Setup
 
-- `POST /api/narrate` - Generate audio narration via Hume AI
-- `POST /api/sage` - Get responses from the Sage LLM
+Use Node.js and pnpm. Copy `.env.example` to `.env.local`, set the required credentials, then run:
 
-## Environment Variables
+```bash
+pnpm install
+pnpm dev
+```
 
-### Required: Hume AI Voice Narration
-\`\`\`env
-HUME_API_KEY=your_hume_api_key
-HUME_VOICE_DEFAULT=serene_monk
-\`\`\`
+`GNANI_API_KEY` is server-only. Configure `SAGE_PROVIDER`, `SAGE_API_KEY`, and `SAGE_API_URL` for the LLM provider used by both Sage chat and translation. See [SETUP_TTS.md](SETUP_TTS.md) for provider examples, voice mapping, and endpoint usage.
 
-### Required: Sage AI LLM Provider
-Choose one of the following configurations:
+## Data
 
-#### Option 1: OpenRouter (Recommended)
-\`\`\`env
-SAGE_PROVIDER=openrouter
-SAGE_API_KEY=your_openrouter_api_key
-SAGE_API_URL=https://openrouter.ai/api/v1
-\`\`\`
+The repository-root `srimad_bhagavatam.json` is statically imported by the story and canto pages. The README's former `/data/` path was incorrect. Chapter verses are English meanings; narration translates those meanings into the chosen language. Sanskrit text is not sent to TTS.
 
-#### Option 2: Ollama (Local)
-\`\`\`env
-SAGE_PROVIDER=ollama
-SAGE_API_URL=http://localhost:11434
-\`\`\`
+## Build and deploy
 
-#### Option 3: Replicate
-\`\`\`env
-SAGE_PROVIDER=replicate
-SAGE_API_KEY=your_replicate_api_key
-\`\`\`
+```bash
+pnpm build
+```
 
-#### Option 4: Custom Local Endpoint
-\`\`\`env
-SAGE_PROVIDER=local
-SAGE_API_URL=http://localhost:8000
-\`\`\`
-
-## Getting Started
-
-1. Install dependencies:
-   \`\`\`bash
-   npm install
-   \`\`\`
-
-2. Set up environment variables in `.env.local`:
-   \`\`\`bash
-   HUME_API_KEY=xxx
-   SAGE_PROVIDER=openrouter
-   SAGE_API_KEY=xxx
-   \`\`\`
-
-3. Run development server:
-   \`\`\`bash
-   npm run dev
-   \`\`\`
-
-4. Open [http://localhost:3000](http://localhost:3000)
-
-## Data Structure
-
-The app expects JSON data at `/data/srimad_bhagavatam.json` with the following structure:
-
-\`\`\`json
-{
-  "cantos": [
-    {
-      "canto": 1,
-      "title": "Creation and Cosmology",
-      "description": "...",
-      "chapters": [
-        {
-          "chapter": 1,
-          "title": "Questions by the Sages",
-          "verses": [
-            { "verse": 1, "text": "...", "sanskrit": "..." }
-          ]
-        }
-      ]
-    }
-  ]
-}
-\`\`\`
-
-## Dependencies
-
-- **Frontend**: Next.js 16, React 19, Tailwind CSS v4, Framer Motion
-- **AI**: Hume AI (Voice), OpenRouter/Ollama (LLM)
-- **Storage**: localStorage (bookmarks)
-
-## Deployment
-
-Deploy to Vercel with:
-\`\`\`bash
-vercel deploy
-\`\`\`
-
-Ensure all environment variables are set in Vercel project settings.
-
-## Design System
-
-- **Colors**: Pure black (#000000), light text (#f5f5f5), gold (#d4af37)
-- **Fonts**: Zen Antique (headings/titles), Helvetica/Coolvetica (body text)
-- **Animations**: Framer Motion with subtle easing
-- **Accessibility**: High contrast ratios, keyboard navigation, screen reader support
-
-## Notes
-
-- Bookmarks are stored in browser localStorage
-- Search is client-side (can be replaced with server-side for larger datasets)
-- Audio narration quality depends on Hume API credits
-- LLM responses are uncached (add caching layer as needed)
+Set the environment variables in your hosting provider. Narration audio and translations are cached under the server's temporary directory and may be cleared when an instance restarts. Browsers also cache audio locally.
