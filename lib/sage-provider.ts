@@ -1,23 +1,63 @@
 type SageMessage = { role: "user" | "assistant"; content: string }
+type SagePurpose = "qa" | "translation"
 
 const SAGE_SYSTEM_PROMPT = `You are the Sage, a keeper of the divine wisdom of the Srimad Bhagavatam. You respond in a calm, devotional tone with references to scripture and verses when appropriate. Format your responses in clear, thoughtful paragraphs. When citing verses, include the canto and chapter. Guide seekers on the path of righteousness (dharma) and spiritual knowledge.`
+const NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1"
+const DEFAULT_NVIDIA_MODEL = "nvidia/nemotron-3-super-120b-a12b"
+
+function cleanFinalText(value: unknown) {
+  if (typeof value !== "string") return ""
+  return value.replace(/<think>[\s\S]*?<\/think>/gi, "").replace(/<think>[\s\S]*$/gi, "").trim()
+}
 
 export async function generateSageText(
   messages: SageMessage[],
   context?: string,
-  options: { provider?: string; temperature?: number; maxTokens?: number } = {},
+  options: { provider?: string; temperature?: number; maxTokens?: number; purpose?: SagePurpose } = {},
 ) {
-  const provider = options.provider || process.env.SAGE_PROVIDER || "openrouter"
+  const provider = options.provider || process.env.SAGE_PROVIDER || "nvidia"
   const apiKey = process.env.SAGE_API_KEY
   const apiUrl = process.env.SAGE_API_URL
+  const purpose = options.purpose || "qa"
   const temperature = options.temperature ?? 0.7
   const maxTokens = options.maxTokens ?? 500
-  if (provider !== "ollama" && !apiKey) throw new Error("Sage translation is not configured yet.")
-
   const system = `${SAGE_SYSTEM_PROMPT}${context ? `\n\nContext: ${context}` : ""}`
+  const requestMessages = [{ role: "system", content: system }, ...messages]
   let response: Response
 
-  if (provider === "openrouter") {
+  if (provider === "nvidia") {
+    const nvidiaKey = process.env.NVIDIA_API_KEY
+    if (!nvidiaKey) throw new Error("NVIDIA_API_KEY is not configured.")
+    const model = purpose === "translation"
+      ? process.env.TRANSLATE_MODEL || DEFAULT_NVIDIA_MODEL
+      : process.env.SAGE_MODEL || DEFAULT_NVIDIA_MODEL
+    const isTranslation = purpose === "translation"
+    try {
+      response = await fetch(`${NVIDIA_BASE_URL}/chat/completions`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${nvidiaKey}`, "Content-Type": "application/json" },
+        signal: AbortSignal.timeout(isTranslation ? 45_000 : 35_000),
+        body: JSON.stringify({
+          model,
+          messages: requestMessages,
+          temperature: 1,
+          top_p: 0.95,
+          max_tokens: isTranslation ? 900 : 1400,
+          ...(isTranslation
+            ? { chat_template_kwargs: { enable_thinking: false } }
+            : { chat_template_kwargs: { enable_thinking: true, low_effort: true }, reasoning_budget: 512 }),
+          stream: false,
+        }),
+      })
+    } catch (error) {
+      if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")) {
+        throw new Error("Sage request timed out. Please try again.")
+      }
+      throw new Error("Sage could not reach NVIDIA NIM. Please try again.")
+    }
+  } else if (provider !== "ollama" && !apiKey) {
+    throw new Error("Sage provider API key is not configured.")
+  } else if (provider === "openrouter") {
     response = await fetch(`${apiUrl || "https://openrouter.ai/api/v1"}/chat/completions`, {
       method: "POST",
       headers: {
@@ -26,13 +66,13 @@ export async function generateSageText(
         "HTTP-Referer": "https://srimad-bhagavatam.app",
         "X-Title": "Srimad Bhagavatam - The Living Chronicle",
       },
-      body: JSON.stringify({ model: "meta-llama/llama-2-7b-chat", messages: [{ role: "system", content: system }, ...messages], temperature, top_p: 0.9, max_tokens: maxTokens }),
+      body: JSON.stringify({ model: "meta-llama/llama-2-7b-chat", messages: requestMessages, temperature, top_p: 0.9, max_tokens: maxTokens }),
     })
   } else if (provider === "ollama") {
     response = await fetch(`${apiUrl || "http://localhost:11434"}/api/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model: "llama2-mini:3b", messages: [{ role: "system", content: system }, ...messages], options: { temperature }, stream: false }),
+      body: JSON.stringify({ model: "llama2-mini:3b", messages: requestMessages, options: { temperature }, stream: false }),
     })
   } else if (provider === "replicate") {
     response = await fetch("https://api.replicate.com/v1/predictions", {
@@ -51,9 +91,17 @@ export async function generateSageText(
     })
   }
 
-  if (!response.ok) throw new Error("Sage could not translate this verse.")
+  if (!response.ok) {
+    if (response.status === 408 || response.status === 504) throw new Error("Sage request timed out. Please try again.")
+    const detail = await response.text().catch(() => "")
+    console.error("Sage provider request failed", { provider, status: response.status, detail: detail.slice(0, 300) })
+    throw new Error("Sage could not complete this request. Please try again.")
+  }
   const data = await response.json()
-  const output = data.message?.content || data.content || data.choices?.[0]?.message?.content || data.output?.join("") || data.text
-  if (typeof output !== "string" || !output.trim()) throw new Error("Sage returned no translation.")
-  return output.trim()
+  const output = provider === "nvidia"
+    ? data.choices?.[0]?.message?.content
+    : data.message?.content || data.content || data.choices?.[0]?.message?.content || data.output?.join("") || data.text
+  const finalText = cleanFinalText(output)
+  if (!finalText) throw new Error("Sage returned no final response.")
+  return finalText
 }

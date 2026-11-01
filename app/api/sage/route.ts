@@ -10,10 +10,13 @@ export async function POST(request: NextRequest) {
 
     const response = await generateSageText(messages, typeof context === "string" ? context : undefined, {
       provider: typeof provider === "string" ? provider : undefined,
+      purpose: "qa",
     })
     return NextResponse.json({ success: true, response })
   } catch (error) {
     console.error("Sage error:", error)
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Internal server error" }, { status: 500 })
+    const message = error instanceof Error ? error.message : "Internal server error"
+    const status = /timed out/i.test(message) ? 504 : /not configured/i.test(message) ? 503 : 502
+    return NextResponse.json({ error: message }, { status })
   }
 }

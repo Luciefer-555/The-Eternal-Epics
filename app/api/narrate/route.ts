@@ -56,7 +56,7 @@ async function translate(text: string, lang: keyof typeof SUPPORTED_LANGUAGES) {
       },
     ],
     "Faithful, reverent translation for spoken narration. Plain text only.",
-    { temperature: 0.2, maxTokens: 700 },
+    { temperature: 1, maxTokens: 900, purpose: "translation" },
   )
 }
 
