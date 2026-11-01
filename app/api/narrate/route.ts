@@ -9,7 +9,8 @@ export const runtime = "nodejs"
 
 const TTS_URL = "https://api.vachana.ai/api/v1/tts/inference"
 const MAX_TEXT_LENGTH = 5_000
-const CACHE_DIR = path.join(tmpdir(), "eternal-epics-gnani-cache")
+const CACHE_DIR = path.join(tmpdir(), "eternal-epics-gnani-cache-v2")
+const SARVAM_CHAT_URL = "https://api.sarvam.ai/v1/chat/completions"
 const SUPPORTED_LANGUAGES = {
   "hi-IN": { label: "Hindi", voice: "Nalini" },
   "en-IN": { label: "English", voice: "Girish" },
@@ -48,6 +49,51 @@ async function cachedAudio(key: string) {
 
 async function translate(text: string, lang: keyof typeof SUPPORTED_LANGUAGES) {
   const language = SUPPORTED_LANGUAGES[lang].label
+  const provider = process.env.TRANSLATE_PROVIDER || "sarvam"
+
+  if (provider === "sarvam") {
+    const apiKey = process.env.SARVAM_API_KEY
+    if (!apiKey) throw new Error("SARVAM_API_KEY is not configured for Indian-language translation.")
+
+    const pieces = splitForTranslation(speakableNumbers(text), 1_900)
+    const translatedPieces: string[] = []
+    for (const piece of pieces) {
+      const response = await fetch(SARVAM_CHAT_URL, {
+        method: "POST",
+        headers: { "api-subscription-key": apiKey, "Content-Type": "application/json" },
+        signal: AbortSignal.timeout(30_000),
+        body: JSON.stringify({
+          model: process.env.TRANSLATE_MODEL || "sarvam-105b-conversations",
+          max_tokens: 500,
+          temperature: 0.2,
+          reasoning_effort: "low",
+          stream: false,
+          messages: [
+            {
+              role: "system",
+              content: `Translate faithfully and reverently into natural ${language} for spoken narration. Preserve every fact, relationship, and sacred name. Write numbers and verse references as spoken words. Return only plain text.`,
+            },
+            { role: "user", content: piece },
+          ],
+        }),
+      })
+      if (!response.ok) {
+        const detail = await response.text().catch(() => "")
+        console.error("Sarvam translation failed", { status: response.status, detail: detail.slice(0, 300) })
+        throw new Error("The translation service could not translate this verse.")
+      }
+      const result = await response.json()
+      const finalText = typeof result.choices?.[0]?.message?.content === "string"
+        ? result.choices[0].message.content.replace(/<think>[\s\S]*?<\/think>/gi, "").replace(/<think>[\s\S]*$/gi, "").trim()
+        : ""
+      if (!finalText) {
+        throw new Error("The translation service returned no narration text.")
+      }
+      translatedPieces.push(finalText)
+    }
+    return translatedPieces.join(" ")
+  }
+
   return generateSageText(
     [
       {
@@ -56,8 +102,50 @@ async function translate(text: string, lang: keyof typeof SUPPORTED_LANGUAGES) {
       },
     ],
     "Faithful, reverent translation for spoken narration. Plain text only.",
-    { temperature: 1, maxTokens: 900, purpose: "translation" },
+    { temperature: 0.2, maxTokens: 300, purpose: "translation", provider },
   )
+}
+
+function splitForTranslation(text: string, maxLength: number) {
+  const sentences = text.match(/[^.!?]+[.!?]+|[^.!?]+$/g)?.map((sentence) => sentence.trim()).filter(Boolean) ?? [text]
+  const pieces: string[] = []
+  for (const sentence of sentences) {
+    let remaining = sentence
+    while (remaining.length > maxLength) {
+      let splitAt = remaining.lastIndexOf(" ", maxLength)
+      if (splitAt < maxLength * 0.6) splitAt = maxLength
+      pieces.push(remaining.slice(0, splitAt).trim())
+      remaining = remaining.slice(splitAt).trim()
+    }
+    if (remaining) pieces.push(remaining)
+  }
+  return pieces
+}
+
+const SMALL_NUMBERS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen"]
+const TENS = ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"]
+
+function numberToWords(value: number): string {
+  if (value < 20) return SMALL_NUMBERS[value]
+  if (value < 100) return `${TENS[Math.floor(value / 10)]}${value % 10 ? ` ${SMALL_NUMBERS[value % 10]}` : ""}`
+  if (value < 1_000) return `${numberToWords(Math.floor(value / 100))} hundred${value % 100 ? ` ${numberToWords(value % 100)}` : ""}`
+  if (value < 1_000_000) return `${numberToWords(Math.floor(value / 1_000))} thousand${value % 1_000 ? ` ${numberToWords(value % 1_000)}` : ""}`
+  if (value < 1_000_000_000) return `${numberToWords(Math.floor(value / 1_000_000))} million${value % 1_000_000 ? ` ${numberToWords(value % 1_000_000)}` : ""}`
+  return String(value)
+}
+
+function speakableNumbers(text: string) {
+  return text.replace(/\b\d[\d,]*(?:\.\d+)?\b/g, (raw) => {
+    const value = raw.replace(/,/g, "")
+    if (value.includes(".")) {
+      const [whole, fraction] = value.split(".")
+      const integer = Number(whole)
+      if (!Number.isSafeInteger(integer) || integer >= 1_000_000_000) return raw
+      return `${numberToWords(integer)} point ${[...fraction].map((digit) => SMALL_NUMBERS[Number(digit)]).join(" ")}`
+    }
+    const integer = Number(value)
+    return Number.isSafeInteger(integer) && integer < 1_000_000_000 ? numberToWords(integer) : raw
+  })
 }
 
 async function generateAudio(key: string, text: string, lang: keyof typeof SUPPORTED_LANGUAGES) {

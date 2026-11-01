@@ -28,7 +28,7 @@ pnpm install
 pnpm dev
 ```
 
-`GNANI_API_KEY` and `NVIDIA_API_KEY` are server-only. Sage chat and narration translation use NVIDIA NIM by default. Get an NVIDIA API key from [build.nvidia.com](https://build.nvidia.com), then set `NVIDIA_API_KEY` in `.env.local`. The defaults are `SAGE_MODEL=nvidia/nemotron-3-super-120b-a12b` and `TRANSLATE_MODEL=nvidia/nemotron-3-super-120b-a12b`. Existing providers remain selectable with `SAGE_PROVIDER` (`openrouter`, `ollama`, `replicate`, or local); those providers use `SAGE_API_KEY` and `SAGE_API_URL` as appropriate. See [SETUP_TTS.md](SETUP_TTS.md) for details.
+`GNANI_API_KEY`, `NVIDIA_API_KEY`, and `SARVAM_API_KEY` are server-only. Sage Q&A uses NVIDIA NIM by default; narration translation uses Sarvam's India-focused `sarvam-105b-conversations` model. Set the corresponding keys in `.env.local`. Get the NVIDIA key from [build.nvidia.com](https://build.nvidia.com) and the Sarvam key from the [Sarvam dashboard](https://dashboard.sarvam.ai/). Existing Sage providers remain selectable with `SAGE_PROVIDER` (`openrouter`, `ollama`, `replicate`, or local); see [SETUP_TTS.md](SETUP_TTS.md) for details.
 
 ## Data
 

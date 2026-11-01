@@ -47,7 +47,7 @@ async function getAudio(text: string, lang: string) {
   const key = await digest(text, lang)
   const cacheUrl = new URL(`/api/narrate?cache=${key}`, window.location.origin).toString()
   const cacheRequest = new Request(cacheUrl)
-  const audioCache = "caches" in window ? await window.caches.open("eternal-epics-narration-v1") : null
+  const audioCache = "caches" in window ? await window.caches.open("eternal-epics-narration-v2") : null
   const cached = audioCache ? await audioCache.match(cacheRequest) : undefined
   if (cached) return cached.blob()
 

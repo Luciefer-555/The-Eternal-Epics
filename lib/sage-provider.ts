@@ -3,7 +3,7 @@ type SagePurpose = "qa" | "translation"
 
 const SAGE_SYSTEM_PROMPT = `You are the Sage, a keeper of the divine wisdom of the Srimad Bhagavatam. You respond in a calm, devotional tone with references to scripture and verses when appropriate. Format your responses in clear, thoughtful paragraphs. When citing verses, include the canto and chapter. Guide seekers on the path of righteousness (dharma) and spiritual knowledge.`
 const NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1"
-const DEFAULT_NVIDIA_MODEL = "nvidia/nemotron-3-super-120b-a12b"
+const DEFAULT_NVIDIA_MODEL = "nvidia/nemotron-3.5-lightning-30b-a3b"
 
 function cleanFinalText(value: unknown) {
   if (typeof value !== "string") return ""
@@ -13,39 +13,44 @@ function cleanFinalText(value: unknown) {
 export async function generateSageText(
   messages: SageMessage[],
   context?: string,
-  options: { provider?: string; temperature?: number; maxTokens?: number; purpose?: SagePurpose } = {},
+  options: { provider?: string; temperature?: number; maxTokens?: number; purpose?: SagePurpose; model?: string } = {},
 ) {
-  const provider = options.provider || process.env.SAGE_PROVIDER || "nvidia"
+  const purpose = options.purpose || "qa"
+  const provider = options.provider || (purpose === "translation" ? process.env.TRANSLATE_PROVIDER : undefined) || process.env.SAGE_PROVIDER || "nvidia"
   const apiKey = process.env.SAGE_API_KEY
   const apiUrl = process.env.SAGE_API_URL
-  const purpose = options.purpose || "qa"
   const temperature = options.temperature ?? 0.7
   const maxTokens = options.maxTokens ?? 500
-  const system = `${SAGE_SYSTEM_PROMPT}${context ? `\n\nContext: ${context}` : ""}`
+  const system = purpose === "translation"
+    ? (context || "Translate faithfully and return plain text only.")
+    : `${SAGE_SYSTEM_PROMPT}${context ? `\n\nContext: ${context}` : ""}`
   const requestMessages = [{ role: "system", content: system }, ...messages]
   let response: Response
 
   if (provider === "nvidia") {
     const nvidiaKey = process.env.NVIDIA_API_KEY
     if (!nvidiaKey) throw new Error("NVIDIA_API_KEY is not configured.")
-    const model = purpose === "translation"
-      ? process.env.TRANSLATE_MODEL || DEFAULT_NVIDIA_MODEL
-      : process.env.SAGE_MODEL || DEFAULT_NVIDIA_MODEL
+    const model = options.model || (purpose === "translation"
+      ? process.env.TRANSLATE_MODEL || "google/gemma-4-31b-it"
+      : process.env.SAGE_MODEL || DEFAULT_NVIDIA_MODEL)
     const isTranslation = purpose === "translation"
+    const isRivaTranslation = model === "nvidia/riva-translate-4b-instruct-v2"
     try {
       response = await fetch(`${NVIDIA_BASE_URL}/chat/completions`, {
         method: "POST",
         headers: { Authorization: `Bearer ${nvidiaKey}`, "Content-Type": "application/json" },
-        signal: AbortSignal.timeout(isTranslation ? 45_000 : 35_000),
+        signal: AbortSignal.timeout(isTranslation ? 60_000 : 35_000),
         body: JSON.stringify({
           model,
           messages: requestMessages,
-          temperature: 1,
-          top_p: 0.95,
-          max_tokens: isTranslation ? 900 : 1400,
-          ...(isTranslation
-            ? { chat_template_kwargs: { enable_thinking: false } }
-            : { chat_template_kwargs: { enable_thinking: true, low_effort: true }, reasoning_budget: 512 }),
+          temperature: isTranslation ? 0.2 : 1,
+          ...(isRivaTranslation ? {} : { top_p: isTranslation ? 0.8 : 0.95 }),
+          max_tokens: isTranslation ? 300 : 1400,
+          ...(isRivaTranslation
+            ? {}
+            : isTranslation
+              ? { chat_template_kwargs: { enable_thinking: false } }
+              : { chat_template_kwargs: { enable_thinking: true, low_effort: true }, reasoning_budget: 512 }),
           stream: false,
         }),
       })
