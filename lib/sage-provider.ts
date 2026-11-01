@@ -13,7 +13,7 @@ function cleanFinalText(value: unknown) {
 export async function generateSageText(
   messages: SageMessage[],
   context?: string,
-  options: { provider?: string; temperature?: number; maxTokens?: number; purpose?: SagePurpose; model?: string } = {},
+  options: { provider?: string; temperature?: number; maxTokens?: number; reasoningBudget?: number; purpose?: SagePurpose; model?: string } = {},
 ) {
   const purpose = options.purpose || "qa"
   const provider = options.provider || (purpose === "translation" ? process.env.TRANSLATE_PROVIDER : undefined) || process.env.SAGE_PROVIDER || "nvidia"
@@ -45,12 +45,12 @@ export async function generateSageText(
           messages: requestMessages,
           temperature: isTranslation ? 0.2 : 1,
           ...(isRivaTranslation ? {} : { top_p: isTranslation ? 0.8 : 0.95 }),
-          max_tokens: isTranslation ? 300 : 1400,
+          max_tokens: isTranslation ? 300 : options.maxTokens ?? 1400,
           ...(isRivaTranslation
             ? {}
             : isTranslation
               ? { chat_template_kwargs: { enable_thinking: false } }
-              : { chat_template_kwargs: { enable_thinking: true, low_effort: true }, reasoning_budget: 512 }),
+              : { chat_template_kwargs: { enable_thinking: true, low_effort: true }, reasoning_budget: options.reasoningBudget ?? 512 }),
           stream: false,
         }),
       })

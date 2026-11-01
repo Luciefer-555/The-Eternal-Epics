@@ -2,6 +2,14 @@
 
 Narration uses Gnani AI Timbre v2.5 through the server-only `POST /api/narrate` route. The route translates English verse meanings through Sarvam Translate, then requests WAV audio from Gnani. Sage Q&A uses NVIDIA NIM. Gnani, NVIDIA, and Sarvam credentials are only read in server routes; they are never exposed to browser code. Audio and translations are cached under the operating system temporary directory; browsers also cache audio in Cache Storage.
 
+## Voice chat
+
+The `/voice-chat` page uses short, tap-to-speak clips for the first implementation. The browser records locally, converts the clip to mono 16 kHz PCM WAV, and sends it to `/api/voice-chat/transcribe`. That server route calls Gnani Prisma v3.0 at `https://api.vachana.ai/stt/v3` with `language_code=indic-auto`; Gnani returns the transcript and detected language. The transcript and recent turns are sent to `/api/voice-chat/respond`, which reuses the configured Sage provider. The response is synthesized by the existing `/api/narrate` route using Gnani Timbre v2.5.
+
+Voice chat defaults to automatic language matching, including code-switching. Users can choose a supported response language to explicitly request it. The microphone is not left open between turns. While Sage is speaking, **Interrupt & speak** stops playback, fades the spoken transcript, and starts a new recording. Recordings automatically stop at 25 seconds; Gnani's REST STT endpoint accepts clips up to 30 seconds. A Gnani API key is used server-side for both speech recognition and TTS; confirm STT access is enabled for the key in your Gnani account.
+
+The bar visualizer, message styling, shimmer, and transcript presentation are lightweight local adaptations of the referenced ElevenLabs UI components. They are presentation components only; no ElevenLabs service or key is used. Gnani TTS does not currently return character alignment data through this app's REST route, so the transcript is shown for the duration of speech rather than highlighted word-by-word.
+
 ## Configure locally
 
 Copy `.env.example` to `.env.local` and set:

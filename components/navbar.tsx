@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { Search, Bookmark } from "lucide-react"
+import { Search, Bookmark, AudioLines } from "lucide-react"
 import { MobileMenu } from "./mobile-menu"
 
 export function Navbar() {
@@ -84,6 +84,14 @@ export function Navbar() {
               className="text-white/80 hover:text-white transition p-2 hidden sm:block"
             >
               <Bookmark size={20} />
+            </Link>
+            <Link
+              href="/voice-chat"
+              aria-label="Voice chat with Sage"
+              title="Voice chat"
+              className={`transition p-2 hidden sm:block ${isActive("/voice-chat") ? "text-yellow-400" : "text-white/80 hover:text-white"}`}
+            >
+              <AudioLines size={20} />
             </Link>
             <MobileMenu />
           </div>
