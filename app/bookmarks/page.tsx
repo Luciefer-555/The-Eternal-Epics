@@ -7,24 +7,46 @@ import { motion } from "framer-motion"
 import Link from "next/link"
 import { BookmarkCheck } from "lucide-react"
 
-const BOOKMARKABLE_ITEMS: Record<string, { canto: number; chapter: number; title: string }> = {
-  story_1_1: { canto: 1, chapter: 1, title: "Questions by the Sages" },
-  story_1_2: { canto: 1, chapter: 2, title: "Divinity and Divine Service" },
-  story_2_1: { canto: 2, chapter: 1, title: "The First Step in God Realization" },
+interface SavedChapter {
+  id: string
+  canto: number
+  chapter: number
+  title: string
 }
 
 export default function BookmarksPage() {
   const { bookmarks, isLoaded } = useBookmarks()
-  const [savedItems, setSavedItems] = useState<typeof BOOKMARKABLE_ITEMS>({})
+  const [savedItems, setSavedItems] = useState<SavedChapter[]>([])
 
   useEffect(() => {
-    const items: typeof BOOKMARKABLE_ITEMS = {}
-    bookmarks.forEach((id) => {
-      if (BOOKMARKABLE_ITEMS[id]) {
-        items[id] = BOOKMARKABLE_ITEMS[id]
-      }
+    if (!isLoaded) return
+    const ids = [...bookmarks]
+    const parseId = (id: string): SavedChapter | null => {
+      const match = /^story_(\d+)_(\d+)$/.exec(id)
+      if (!match) return null
+      const canto = Number(match[1])
+      const chapter = Number(match[2])
+      return { id, canto, chapter, title: `Chapter ${chapter}` }
+    }
+    const fallbackItems = ids.map(parseId).filter((item): item is SavedChapter => item !== null)
+    setSavedItems(fallbackItems)
+    if (!ids.length) return
+
+    const controller = new AbortController()
+    fetch("/api/bookmarks", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ids }),
+      signal: controller.signal,
+    }).then(async (response) => {
+      if (!response.ok) return
+      const data = await response.json()
+      if (Array.isArray(data.items) && !controller.signal.aborted) setSavedItems(data.items)
+    }).catch((error) => {
+      if (!controller.signal.aborted) console.error("Could not load saved chapter titles", error)
     })
-    setSavedItems(items)
+
+    return () => controller.abort()
   }, [bookmarks, isLoaded])
 
   if (!isLoaded) {
@@ -47,19 +69,19 @@ export default function BookmarksPage() {
         <div className="max-w-3xl mx-auto">
           <h1 className="text-4xl font-serif text-foreground mb-2">Saved Stories</h1>
           <p className="text-muted-foreground mb-8">
-            {Object.keys(savedItems).length} saved chapter{Object.keys(savedItems).length !== 1 ? "s" : ""}
+            {savedItems.length} saved chapter{savedItems.length !== 1 ? "s" : ""}
           </p>
 
-          {Object.keys(savedItems).length === 0 ? (
+          {savedItems.length === 0 ? (
             <div className="text-center py-12 border border-border rounded-lg">
               <BookmarkCheck className="mx-auto mb-4 text-muted-foreground" size={48} />
               <p className="text-muted-foreground">No bookmarks yet. Start saving your favorite chapters!</p>
             </div>
           ) : (
             <div className="space-y-3">
-              {Object.entries(savedItems).map(([id, item], idx) => (
+              {savedItems.map((item, idx) => (
                 <motion.div
-                  key={id}
+                  key={item.id}
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: idx * 0.1 }}
